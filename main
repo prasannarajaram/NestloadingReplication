@@ -1,0 +1,204 @@
+' ===== Main Sub =====
+Sub MainProcedure()
+    Dim templatePath As String
+    Dim newWorkbook As Workbook
+    Dim findReplaceSheet As Worksheet
+    Dim savePath As String
+
+    Set findReplaceSheet = LoadFindReplaceSheet()
+    If findReplaceSheet Is Nothing Then Exit Sub
+
+    templatePath = GetTemplatePath()
+    If templatePath = "" Then Exit Sub
+
+    Set newWorkbook = OpenTemplateWorkbook(templatePath)
+    If newWorkbook Is Nothing Then Exit Sub
+
+    Call PerformFindReplace(newWorkbook, findReplaceSheet)
+    Call ReplaceHeadersAndFooters(newWorkbook, findReplaceSheet)
+    Call RenameWorksheets(newWorkbook, findReplaceSheet)
+
+    savePath = GetSavePathFromUser(findReplaceSheet)
+    If savePath = "" Then
+        newWorkbook.Close SaveChanges:=False
+        Exit Sub
+    End If
+
+'    newWorkbook.SaveAs Filename:=savePath, FileFormat:=xlOpenXMLWorkbook
+'    newWorkbook.Close SaveChanges:=False
+'
+'    MsgBox "Workbook saved with replacements at:" & vbCrLf & savePath, vbInformation
+    
+    newWorkbook.SaveAs Filename:=savePath, FileFormat:=xlOpenXMLWorkbook
+    newWorkbook.Close SaveChanges:=False
+
+    MsgBox "Workbook saved with replacements at:" & vbCrLf & savePath, vbInformation
+
+    ' Prompt user to export as PDF
+    If MsgBox("Do you want to export this workbook as a PDF?", vbYesNo + vbQuestion, "Export to PDF") = vbYes Then
+        Call ExportWorkbookToPDF(savePath)
+    End If
+    
+End Sub
+
+' ===== Load Settings Sheet =====
+Function LoadFindReplaceSheet() As Worksheet
+    Dim ws As Worksheet
+    On Error Resume Next
+    Set ws = ThisWorkbook.Sheets("Settings")
+    On Error GoTo 0
+    If ws Is Nothing Then
+        MsgBox "Settings sheet not found!", vbCritical
+        Set LoadFindReplaceSheet = Nothing
+    Else
+        Set LoadFindReplaceSheet = ws
+    End If
+End Function
+
+' ===== File Dialog to Select Template =====
+Function GetTemplatePath() As String
+    Dim fd As fileDialog
+    Set fd = Application.fileDialog(msoFileDialogFilePicker)
+    With fd
+        .Title = "Select Excel Template (.xltx)"
+        .Filters.Clear
+        .Filters.Add "Excel Template Files", "*.xltx"
+        .AllowMultiSelect = False
+        If .Show <> -1 Then
+            MsgBox "No file selected.", vbExclamation
+            GetTemplatePath = ""
+        Else
+            GetTemplatePath = .SelectedItems(1)
+        End If
+    End With
+End Function
+
+' ===== Open Template Workbook =====
+Function OpenTemplateWorkbook(templatePath As String) As Workbook
+    On Error Resume Next
+    Set OpenTemplateWorkbook = Workbooks.Open(templatePath)
+    If OpenTemplateWorkbook Is Nothing Then
+        MsgBox "Failed to open template file.", vbCritical
+    End If
+End Function
+
+' ===== Perform Find and Replace in Worksheets =====
+Sub PerformFindReplace(wb As Workbook, settingsSheet As Worksheet)
+    Dim ws As Worksheet
+    Dim i As Long, lastRow As Long
+    Dim findText As String, replaceText As String
+
+    lastRow = settingsSheet.Cells(settingsSheet.Rows.Count, 1).End(xlUp).Row
+
+    For Each ws In wb.Worksheets
+        For i = 1 To lastRow
+            findText = Trim(settingsSheet.Cells(i, 1).Value)
+            replaceText = settingsSheet.Cells(i, 2).Value
+            If Len(findText) > 0 Then
+                ws.Cells.Replace What:=findText, Replacement:=replaceText, _
+                    LookAt:=xlPart, SearchOrder:=xlByRows, MatchCase:=False
+            End If
+        Next i
+    Next ws
+End Sub
+
+' ===== Perform Find and Replace in Header & Footer =====
+Sub ReplaceHeadersAndFooters(wb As Workbook, settingsSheet As Worksheet)
+    Dim ws As Worksheet
+    Dim i As Long, lastRow As Long
+    Dim findText As String, replaceText As String
+
+    lastRow = settingsSheet.Cells(settingsSheet.Rows.Count, 1).End(xlUp).Row
+
+    For Each ws In wb.Worksheets
+        With ws.PageSetup
+            For i = 1 To lastRow
+                findText = Trim(settingsSheet.Cells(i, 1).Value)
+                replaceText = settingsSheet.Cells(i, 2).Value
+
+                If Len(findText) > 0 Then
+                    .LeftHeader = Replace(.LeftHeader, findText, replaceText)
+                    .CenterHeader = Replace(.CenterHeader, findText, replaceText)
+                    .RightHeader = Replace(.RightHeader, findText, replaceText)
+                    .LeftFooter = Replace(.LeftFooter, findText, replaceText)
+                    .CenterFooter = Replace(.CenterFooter, findText, replaceText)
+                    .RightFooter = Replace(.RightFooter, findText, replaceText)
+                End If
+            Next i
+        End With
+    Next ws
+End Sub
+
+' ===== Rename Worksheets Based on Settings =====
+Sub RenameWorksheets(wb As Workbook, settingsSheet As Worksheet)
+    Dim ws As Worksheet
+    Dim i As Long, lastRow As Long
+    Dim findText As String, replaceText As String
+    Dim newName As String
+
+    lastRow = settingsSheet.Cells(settingsSheet.Rows.Count, 1).End(xlUp).Row
+
+    For Each ws In wb.Worksheets
+        For i = 1 To lastRow
+            findText = Trim(settingsSheet.Cells(i, 1).Value)
+            replaceText = settingsSheet.Cells(i, 2).Value
+            If Len(findText) > 0 And InStr(ws.name, findText) > 0 Then
+                newName = Replace(ws.name, findText, replaceText)
+                newName = CleanSheetName(newName)
+                On Error Resume Next
+                ws.name = newName
+                On Error GoTo 0
+            End If
+        Next i
+    Next ws
+End Sub
+
+' ===== Utility: Clean Worksheet Name =====
+Function CleanSheetName(name As String) As String
+    Dim invalidChars As Variant
+    Dim i As Integer
+
+    invalidChars = Array(":", "\", "/", "?", "*", "[", "]")
+
+    For i = LBound(invalidChars) To UBound(invalidChars)
+        name = Replace(name, invalidChars(i), "")
+    Next i
+
+    CleanSheetName = Left(name, 31)
+End Function
+
+' ===== Prompt User for Save As Path =====
+Function GetSavePathFromUser(settingsSheet As Worksheet) As String
+    Dim defaultName As String
+    defaultName = Trim(settingsSheet.Range("B2").Value)
+    If defaultName = "" Then defaultName = "NewWorkbook"
+    If LCase(Right(defaultName, 5)) <> ".xlsx" Then
+        defaultName = defaultName & ".xlsx"
+    End If
+
+    GetSavePathFromUser = Application.GetSaveAsFilename( _
+        InitialFileName:=defaultName, _
+        FileFilter:="Excel Workbook (*.xlsx), *.xlsx")
+
+    If GetSavePathFromUser = "False" Then GetSavePathFromUser = ""
+End Function
+
+Sub ExportWorkbookToPDF(ByVal filePath As String)
+    Dim wb As Workbook
+    Dim pdfPath As String
+
+    ' Open the workbook silently (in case it's already closed)
+    Set wb = Workbooks.Open(filePath, ReadOnly:=True)
+
+    ' Build PDF path by changing extension
+    pdfPath = Left(filePath, InStrRev(filePath, ".")) & "pdf"
+
+    ' Export to PDF
+    wb.ExportAsFixedFormat Type:=xlTypePDF, Filename:=pdfPath, _
+        Quality:=xlQualityStandard, IncludeDocProperties:=True, _
+        IgnorePrintAreas:=False, OpenAfterPublish:=True
+
+    wb.Close SaveChanges:=False
+
+    MsgBox "Workbook exported as PDF:" & vbCrLf & pdfPath, vbInformation
+End Sub
